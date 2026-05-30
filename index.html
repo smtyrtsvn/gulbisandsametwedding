@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anı Paylaşım Köşesi & Canlı Galeri</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            text-align: center; 
+            padding: 20px; 
+            background-color: #f4f6f9; 
+            color: #333;
+        }
+        h2 { color: #4a4a4a; margin-bottom: 5px; }
+        .sub-text { color: #777; margin-bottom: 25px; }
+        
+        /* Yükleme Butonu */
+        .upload-btn { 
+            background-color: #8a7355; /* Şık bir düğün teması rengi */
+            color: white; 
+            padding: 15px 35px; 
+            border: none; 
+            border-radius: 30px; 
+            font-size: 18px; 
+            font-weight: bold;
+            cursor: pointer; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            transition: transform 0.2s;
+        }
+        .upload-btn:active { transform: scale(0.95); }
+        #status { margin-top: 20px; font-weight: bold; color: #555; }
+
+        /* Galeri Alanı (Responsive Grid) */
+        .gallery-title { margin-top: 50px; font-size: 22px; color: #4a4a4a; border-top: 1px solid #ddd; padding-top: 20px; }
+        .gallery { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); 
+            gap: 12px; 
+            margin-top: 20px; 
+            padding: 10px;
+        }
+        .gallery-item { 
+            position: relative; 
+            border-radius: 12px; 
+            overflow: hidden; 
+            background: white;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+        }
+        .gallery-item img, .gallery-item video { 
+            width: 100%; 
+            height: 150px; 
+            object-fit: cover; 
+        }
+        /* İndirme Butonu */
+        .download-btn { 
+            background-color: rgba(0, 0, 0, 0.7); 
+            color: white; 
+            text-decoration: none; 
+            padding: 8px; 
+            font-size: 13px; 
+            text-align: center;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .download-btn:hover { background-color: #8a7355; }
+    </style>
+</head>
+<body>
+
+    <h2>Bizimle Paylaştığınız Anılar İçin Teşekkür Ederiz! ✨</h2>
+    <p class="sub-text">Düğünde çektiğiniz fotoğraf ve videoları yükleyin, canlı albümde anında görün!</p>
+    
+    <input type="file" id="fileChooser" accept="image/*,video/*" multiple style="display:none;">
+    <button class="upload-btn" onclick="document.getElementById('fileChooser').click()">📸 Fotoğraf / Video Gönder</button>
+
+    <div id="status"></div>
+
+    <h3 class="gallery-title">📸 Canlı Düğün Albümü</h3>
+    <div class="gallery" id="gallery">
+        </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getStorage, ref, uploadBytes, listAll, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+
+        // BURAYI KENDİ FİREBASE BİLGİLERİNİZLE DOLDURUN
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const storage = getStorage(app);
+
+        const fileChooser = document.getElementById('fileChooser');
+        const statusDiv = document.getElementById('status');
+        const galleryDiv = document.getElementById('gallery');
+
+        // GENEL KLASÖR REFERANSI
+        const folderRef = ref(storage, 'dugun_fotograflari/');
+
+        // 1. GALERİYİ YÜKLEME FONKSİYONU
+        function loadGallery() {
+            galleryDiv.innerHTML = "<p style='grid-column: 1/-1; color:#999;'>Albümler yükleniyor...</p>";
+            
+            listAll(folderRef).then((res) => {
+                if(res.items.length === 0) {
+                    galleryDiv.innerHTML = "<p style='grid-column: 1/-1; color:#999;'>Henüz fotoğraf yüklenmedi. İlk yükleyen siz olun! 🚀</p>";
+                    return;
+                }
+                
+                galleryDiv.innerHTML = ""; // Temizle
+                
+                // Fotoğrafları yüklenme sırasına göre (veya isme göre) döngüye alıyoruz
+                res.items.forEach((itemRef) => {
+                    getDownloadURL(itemRef).then((url) => {
+                        const itemDiv = document.createElement('div');
+                        itemDiv.className = 'gallery-item';
+
+                        // Dosya uzantısına göre video mu görsel mi kontrolü
+                        const isVideo = itemRef.name.match(/\.(mp4|webm|ogg|mov)$/i);
+
+                        if (isVideo) {
+                            itemDiv.innerHTML = `
+                                <video src="${url}" preload="metadata"></video>
+                                <a href="${url}" target="_blank" download="${itemRef.name}" class="download-btn">📥 İndir</a>
+                            `;
+                        } else {
+                            itemDiv.innerHTML = `
+                                <img src="${url}" loading="lazy" alt="Düğün Anısı">
+                                <a href="${url}" target="_blank" download="${itemRef.name}" class="download-btn">📥 İndir</a>
+                            `;
+                        }
+                        galleryDiv.appendChild(itemDiv);
+                    });
+                });
+            }).catch((error) => {
+                console.error("Galeri yüklenirken hata:", error);
+                galleryDiv.innerHTML = "Galeri yüklenemedi.";
+            });
+        }
+
+        // SÜREÇ: DOSYA SEÇİLDİĞİNDE YÜKLEME
+        fileChooser.addEventListener('change', async (e) => {
+            const files = e.target.files;
+            if (files.length === 0) return;
+
+            statusDiv.innerText = `Yükleniyor (0/${files.length}) ⏳`;
+            let uploadedCount = 0;
+
+            for (const file of Array.from(files)) {
+                // İsmin çakışmaması için benzersiz bir id üretiyoruz
+                const uniqueName = Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + file.name;
+                const storageRef = ref(storage, 'dugun_fotograflari/' + uniqueName);
+                
+                try {
+                    await uploadBytes(storageRef, file);
+                    uploadedCount++;
+                    statusDiv.innerText = `Yükleniyor (${uploadedCount}/${files.length}) ⏳`;
+                } catch (error) {
+                    console.error("Yükleme hatası:", error);
+                }
+            }
+
+            statusDiv.innerText = "Harika! Tüm dosyalar başarıyla yüklendi. 🎉";
+            setTimeout(() => { statusDiv.innerText = ""; }, 5000);
+            
+            // Yükleme bitince galeriyi anlık olarak yenile
+            loadGallery();
+        });
+
+        // Sayfa ilk açıldığında galeriyi getir
+        loadGallery();
+    </script>
+</body>
+</html>
