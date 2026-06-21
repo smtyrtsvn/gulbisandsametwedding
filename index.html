@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gülbiş & Samet Düğün Albümü</title>
+    <!-- JSZip Kütüphanesi -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         :root {
             --ink: #24211e;
@@ -292,11 +294,44 @@
             margin-bottom: 22px;
         }
 
+        /* ZIP İndirme Butonu ve Sayaç Alanı */
+        .gallery-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
         .gallery-count {
-            flex: 0 0 auto;
             color: var(--accent-dark);
             font-size: 14px;
             font-weight: 800;
+        }
+
+        .download-all-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 999px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(109, 74, 52, 0.2);
+            transition: background 0.2s ease, transform 0.2s ease;
+            display: none; /* İlk başta gizli, fotoğraf varsa görünecek */
+        }
+
+        .download-all-btn:hover {
+            background: var(--accent-dark);
+            transform: translateY(-2px);
+        }
+
+        .download-all-btn:disabled {
+            background: var(--muted);
+            cursor: wait;
+            transform: none;
+            box-shadow: none;
         }
 
         .gallery {
@@ -382,6 +417,53 @@
             transform: translateY(-1px);
         }
 
+        /* Sayfalama (Pagination) Alanı Stilleri */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin-top: 32px;
+            flex-wrap: wrap;
+            grid-column: 1 / -1;
+        }
+
+        .page-btn {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            color: var(--ink);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(72, 52, 36, 0.05);
+        }
+
+        .page-btn:hover:not(:disabled) {
+            background: rgba(234, 223, 206, 0.3);
+            border-color: var(--accent);
+        }
+
+        .page-btn.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .page-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .page-dots {
+            color: var(--muted);
+            font-weight: 800;
+            padding: 0 4px;
+        }
+
         @media (max-width: 880px) {
             .page-shell {
                 width: min(100% - 24px, 720px);
@@ -407,9 +489,10 @@
                 display: block;
             }
 
-            .gallery-count {
-                display: block;
-                margin-top: 10px;
+            .gallery-actions {
+                margin-top: 16px;
+                justify-content: space-between;
+                width: 100%;
             }
         }
 
@@ -451,6 +534,11 @@
                 padding: 7px 10px;
                 font-size: 12px;
             }
+            
+            .page-btn {
+                padding: 6px 12px;
+                font-size: 13px;
+            }
         }
     </style>
 </head>
@@ -463,7 +551,6 @@
                     Masadaki QR kodu tarayıp düğünde yakaladığınız fotoğraf ve videoları buraya yükleyin.
                     Paylaştığınız her anı bizim albümümüzde yerini alsın.
                 </p>
-
             </div>
 
             <section class="upload-panel" aria-labelledby="upload-title">
@@ -507,9 +594,15 @@
                     <h2 id="gallery-title">Paylaşılan anılar</h2>
                     <p>Yüklenen fotoğraf ve videolar, misafir notlarıyla birlikte burada listelenir.</p>
                 </div>
-                <span class="gallery-count" id="galleryCount">Albüm hazırlanıyor</span>
+                <!-- Sayaç ve İndirme Butonu yan yana -->
+                <div class="gallery-actions">
+                    <span class="gallery-count" id="galleryCount">Albüm hazırlanıyor</span>
+                    <button id="downloadAllBtn" class="download-all-btn">📥 Tümünü İndir (ZIP)</button>
+                </div>
             </div>
+            <!-- Galeri Alanı ve Sayfalama -->
             <div class="gallery" id="gallery"></div>
+            <div class="pagination" id="pagination"></div>
         </section>
     </main>
 
@@ -521,7 +614,8 @@
             uploadBytesResumable,
             listAll,
             getDownloadURL,
-            getMetadata
+            getMetadata,
+            getBlob  // ZIP için getBlob fonksiyonunu ekledik
         } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
         const firebaseConfig = {
@@ -545,12 +639,20 @@
         const progressWrap = document.getElementById("progressWrap");
         const progressBar = document.getElementById("progressBar");
         const galleryDiv = document.getElementById("gallery");
+        const paginationDiv = document.getElementById("pagination");
         const galleryCount = document.getElementById("galleryCount");
+        const downloadAllBtn = document.getElementById("downloadAllBtn"); 
+        
         const folderRef = ref(storage, "dugun_fotograflari/");
 
         const maxFileSizeMb = 150;
         const maxFileSizeBytes = maxFileSizeMb * 1024 * 1024;
         const videoExtensions = /\.(mp4|webm|ogg|mov|m4v)$/i;
+
+        // Sayfalama (Pagination) Değişkenleri
+        let allItemsRef = [];
+        let currentPage = 1;
+        const itemsPerPage = 10;
 
         function setStatus(message, isError = false) {
             statusDiv.textContent = message;
@@ -646,9 +748,13 @@
             });
         }
 
+        // --- GALERİ VE SAYFALAMA MANTIĞI ---
+
         async function loadGallery() {
             setGalleryMessage("Albüm yükleniyor...");
             galleryCount.textContent = "Albüm hazırlanıyor";
+            downloadAllBtn.style.display = "none"; 
+            paginationDiv.innerHTML = "";
 
             try {
                 const result = await listAll(folderRef);
@@ -656,30 +762,189 @@
                 if (result.items.length === 0) {
                     setGalleryMessage("Henüz fotoğraf yüklenmedi. İlk anıyı siz paylaşın.");
                     galleryCount.textContent = "0 paylaşım";
+                    downloadAllBtn.style.display = "none";
                     return;
                 }
 
-                galleryDiv.innerHTML = "";
-                galleryCount.textContent = `${result.items.length} paylaşım`;
+                // Dosyaları en yeniden en eskiye sıralıyoruz (isimler timestamp içeriyor)
+                allItemsRef = result.items.sort((a, b) => b.name.localeCompare(a.name));
 
-                const galleryItems = await Promise.all(
-                    result.items.map(async (itemRef) => {
-                        const [url, metadata] = await Promise.all([
-                            getDownloadURL(itemRef),
-                            getMetadata(itemRef).catch(() => null)
-                        ]);
+                galleryCount.textContent = `${allItemsRef.length} paylaşım`;
+                downloadAllBtn.style.display = "inline-flex";
 
-                        return createGalleryItem(url, itemRef, metadata);
-                    })
-                );
+                // İlk sayfayı render et
+                await renderPage(1);
 
-                galleryItems.forEach((item) => galleryDiv.appendChild(item));
             } catch (error) {
                 console.error("Galeri yüklenirken hata:", error);
                 setGalleryMessage("Galeri şu anda yüklenemedi. Biraz sonra tekrar deneyin.");
                 galleryCount.textContent = "Bağlantı hatası";
             }
         }
+
+        async function renderPage(page) {
+            const totalPages = Math.ceil(allItemsRef.length / itemsPerPage);
+            if (page < 1) page = 1;
+            if (page > totalPages) page = totalPages;
+            
+            currentPage = page;
+
+            galleryDiv.innerHTML = "";
+            setGalleryMessage(`Sayfa ${currentPage} yükleniyor...`);
+
+            // Sadece mevcut sayfadaki öğeleri hesapla ve kes (0-10, 10-20 vb.)
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const pageItemsRef = allItemsRef.slice(startIndex, endIndex);
+
+            try {
+                const galleryItems = await Promise.all(
+                    pageItemsRef.map(async (itemRef) => {
+                        const [url, metadata] = await Promise.all([
+                            getDownloadURL(itemRef),
+                            getMetadata(itemRef).catch(() => null)
+                        ]);
+                        return createGalleryItem(url, itemRef, metadata);
+                    })
+                );
+
+                galleryDiv.innerHTML = ""; // Yükleniyor mesajını sil
+                galleryItems.forEach((item) => galleryDiv.appendChild(item));
+
+                // Sayfalama butonlarını güncelle
+                renderPaginationControls(totalPages);
+
+                // Sayfa değiştiğinde hafifçe galeri başlığına kaydır (UX iyileştirmesi)
+                if (page > 1 || currentPage !== page) {
+                    document.getElementById("gallery-title").scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+
+            } catch (error) {
+                console.error("Sayfa yüklenirken hata:", error);
+                setGalleryMessage("Sayfa içerikleri yüklenemedi. Lütfen sayfayı yenileyin.");
+            }
+        }
+
+        function renderPaginationControls(totalPages) {
+            paginationDiv.innerHTML = "";
+            if (totalPages <= 1) return; // Tek sayfa ise gizle
+
+            // Önceki Butonu
+            const prevBtn = document.createElement("button");
+            prevBtn.className = "page-btn";
+            prevBtn.innerHTML = "&laquo; Önceki";
+            prevBtn.disabled = currentPage === 1;
+            prevBtn.onclick = () => renderPage(currentPage - 1);
+            paginationDiv.appendChild(prevBtn);
+
+            let lastAdded = 0;
+            // 1, 2, 3 ... 7, 8 gibi akıllı numaralandırma mantığı
+            for (let i = 1; i <= totalPages; i++) {
+                if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                    if (lastAdded !== 0 && i - lastAdded > 1) {
+                        const dots = document.createElement("span");
+                        dots.className = "page-dots";
+                        dots.textContent = "...";
+                        paginationDiv.appendChild(dots);
+                    }
+                    const pageBtn = document.createElement("button");
+                    pageBtn.className = `page-btn ${i === currentPage ? "active" : ""}`;
+                    pageBtn.textContent = i;
+                    pageBtn.onclick = () => renderPage(i);
+                    paginationDiv.appendChild(pageBtn);
+                    lastAdded = i;
+                }
+            }
+
+            // Sonraki Butonu
+            const nextBtn = document.createElement("button");
+            nextBtn.className = "page-btn";
+            nextBtn.innerHTML = "Sonraki &raquo;";
+            nextBtn.disabled = currentPage === totalPages;
+            nextBtn.onclick = () => renderPage(currentPage + 1);
+            paginationDiv.appendChild(nextBtn);
+        }
+
+        // ==========================================
+        // YENİ EKLENEN: TÜMÜNÜ ZIP OLARAK İNDİRME FONKSİYONU
+        // ==========================================
+        async function tumDosyalariIndir() {
+            try {
+                downloadAllBtn.disabled = true;
+                const originalText = downloadAllBtn.textContent;
+                downloadAllBtn.textContent = "Hazırlanıyor...";
+
+                const listResult = await listAll(folderRef);
+                
+                if (listResult.items.length === 0) {
+                    alert("İndirilecek dosya bulunamadı.");
+                    downloadAllBtn.disabled = false;
+                    downloadAllBtn.textContent = originalText;
+                    return;
+                }
+
+                const zip = new JSZip();
+                let downloadedCount = 0;
+
+                // Tüm dosyaları paralel olarak indirip ZIP'e ekleyelim
+                const downloadPromises = listResult.items.map(async (itemRef) => {
+                    try {
+                        const blob = await getBlob(itemRef);
+                        // Metadata'dan orijinal dosya adını bulmaya çalış, bulamazsan itemRef.name kullan
+                        let fileNameToSave = itemRef.name;
+                        try {
+                            const meta = await getMetadata(itemRef);
+                            if (meta.customMetadata && meta.customMetadata.originalFileName) {
+                                // İsim çakışmasını önlemek için sonuna benzersiz bir kod ekleyebiliriz
+                                fileNameToSave = meta.customMetadata.originalFileName;
+                            }
+                        } catch (e) { /* Hata olursa varsayılan isme devam et */ }
+                        
+                        // Dosyayı ZIP içerisine ekliyoruz
+                        zip.file(fileNameToSave, blob);
+                        downloadedCount++;
+                        downloadAllBtn.textContent = `İndiriliyor... (${downloadedCount}/${listResult.items.length})`;
+                    } catch (err) {
+                        console.error(`${itemRef.name} indirilemedi:`, err);
+                    }
+                });
+
+                await Promise.all(downloadPromises);
+                
+                downloadAllBtn.textContent = "ZIP Oluşturuluyor...";
+
+                // ZIP arşivini oluşturup indirme işlemini tetikleyelim
+                // generateAsync ile ilerleme durumunu (progress) de alabiliyoruz
+                const zipBlob = await zip.generateAsync({ type: "blob" }, (metadata) => {
+                    downloadAllBtn.textContent = `Sıkıştırılıyor: %${Math.round(metadata.percent)}`;
+                });
+                
+                const indirmeLinki = document.createElement("a");
+                indirmeLinki.href = URL.createObjectURL(zipBlob);
+                indirmeLinki.download = "Gulbis_Samet_Dugun_Albumu.zip";
+                document.body.appendChild(indirmeLinki);
+                indirmeLinki.click();
+                document.body.removeChild(indirmeLinki);
+                
+                // Bellek temizliği
+                URL.revokeObjectURL(indirmeLinki.href);
+                
+                // İşlem bittikten sonra butonu eski haline getir
+                setTimeout(() => {
+                    downloadAllBtn.textContent = originalText;
+                    downloadAllBtn.disabled = false;
+                }, 2000);
+
+            } catch (error) {
+                console.error("Dosyalar indirilirken hata oluştu:", error);
+                alert("Toplu indirme sırasında bir hata oluştu.");
+                downloadAllBtn.disabled = false;
+                downloadAllBtn.textContent = "📥 Tümünü İndir (ZIP)";
+            }
+        }
+
+        downloadAllBtn.addEventListener("click", tumDosyalariIndir);
+        // ==========================================
 
         uploadButton.addEventListener("click", () => fileChooser.click());
 
@@ -749,6 +1014,7 @@
 
             uploadButton.disabled = false;
             fileChooser.value = "";
+            // Yükleme sonrası listeyi ve sayfayı baştan yükle
             await loadGallery();
 
             setTimeout(() => {
